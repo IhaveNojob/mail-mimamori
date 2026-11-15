@@ -3,3 +3,6 @@ fastapi
 uvicorn[standard]
 python-dotenv
 anthropic
+httpx
+python-multipart
+pillow

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>郵便の履歴</title>
+<style>
+  :root { --bg: #f4f6f8; --card: #fff; --ink: #1d2733; --muted: #6b7785; --line: #d8dee5; --red: #d64545; --yellow: #d9a514; --gray: #9aa4ae; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; border-left: 6px solid var(--gray); }
+  .imp-要対応 { border-left-color: var(--red); }
+  .imp-確認 { border-left-color: var(--yellow); }
+  .card header { display: flex; justify-content: space-between; font-size: 12px; }
+  .badge { font-weight: bold; }
+  .imp-要対応 .badge { color: var(--red); } .imp-確認 .badge { color: var(--yellow); } .imp-捨ててよい .badge { color: var(--gray); }
+  .st { color: var(--muted); }
+  h2 { font-size: 16px; margin: 6px 0; } h2 small { color: var(--muted); font-weight: normal; font-size: 13px; }
+  p { margin: 4px 0 8px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; font-size: 14px; }
+  dt { color: var(--muted); } dd { margin: 0; }
+  .thumbs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .thumbs img { height: 72px; border-radius: 6px; border: 1px solid var(--line); }
+  footer { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>📮 {{PARENT}}さん宛ての郵便</h1>
+  {{CARDS}}
+</main>
+</body>
+</html>

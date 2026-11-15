@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>郵便見守り デモ</title>
+<style>
+  :root {
+    --bg: #eef1f4; --panel: #ffffff; --ink: #1d2733; --muted: #6b7785;
+    --chat: #8ca3b8; --bubble: #ffffff; --mine: #8de08a; --accent: #1f8f4e;
+    --red: #d64545; --yellow: #d9a514; --gray: #9aa4ae; --line: #d8dee5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; background: var(--bg); color: var(--ink); }
+  header.top { padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header.top h1 { font-size: 18px; margin: 0; }
+  header.top .meta { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--red); }
+  .phones { display: grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 960px) { .phones { grid-template-columns: 1fr; } }
+  .phone { background: var(--panel); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 520px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+  .phone h2 { margin: 0; padding: 12px 14px; font-size: 15px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .phone h2 small { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .chat { flex: 1; overflow-y: auto; background: var(--chat); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 85%; display: flex; flex-direction: column; gap: 4px; }
+  .msg.mine { align-self: flex-end; align-items: flex-end; }
+  .bubble { background: var(--bubble); border-radius: 14px; padding: 8px 11px; white-space: pre-wrap; font-size: 13.5px; line-height: 1.5; word-break: break-word; }
+  .mine .bubble { background: var(--mine); }
+  .time { font-size: 10px; color: #eef3f7; }
+  .qr { display: flex; flex-wrap: wrap; gap: 6px; }
+  .qr button { border-radius: 999px; padding: 4px 10px; font-size: 12px; background: #fff; border-color: var(--accent); color: var(--accent); }
+  .compose { border-top: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .row { display: flex; gap: 6px; }
+  .row input[type=text] { flex: 1; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+  select { font: inherit; font-size: 12px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; flex: 1; }
+  .pending { font-size: 12px; color: var(--muted); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>📮 親宛て郵便物の見える化（デモ）</h1>
+  <span class="meta" id="meta"></span>
+  <div class="controls">
+    <button class="primary" onclick="api('/demo/setup')">① 家族をまとめて登録</button>
+    <button onclick="api('/demo/run/batch')">今すぐ読み取る</button>
+    <button onclick="api('/demo/run/trash')">19時のまとめ通知</button>
+    <button onclick="api('/demo/run/remind')">9時の期限通知</button>
+    <a id="hist" target="_blank" style="display:none;align-self:center;font-size:13px">履歴ページ ↗</a>
+    <button class="danger" onclick="if(confirm('データを全部消しますか？')) api('/demo/reset').then(()=>location.reload())">リセット</button>
+  </div>
+</header>
+<main class="phones" id="phones"></main>
+
+<script>
+const USERS = {U_child: "子ども（登録者）", U_helper: "撮影する人（現地）", U_sibling: "兄弟（家族）"};
+const IMAGES = {"img:tax": "市県民税の納付書", "img:dm": "通販のDM", "img:clinic": "健診結果のお知らせ"};
+let last = 0;
+
+const phones = document.getElementById("phones");
+for (const [uid, name] of Object.entries(USERS)) {
+  const el = document.createElement("section");
+  el.className = "phone";
+  el.innerHTML = `
+    <h2>${name} <small>${uid}</small></h2>
+    <div class="chat" id="chat-${uid}"></div>
+    <div class="compose">
+      <div class="row">
+        <input type="text" placeholder="メッセージ（例: 一覧）" id="in-${uid}">
+        <button onclick="sendText('${uid}')">送信</button>
+      </div>
+      <div class="row">
+        <select id="sample-${uid}">
+          ${Object.entries(IMAGES).map(([v, s]) => `<option value="${v}">サンプル写真: ${s}</option>`).join("")}
+        </select>
+        <button onclick="sendImage('${uid}')">📷 写真</button>
+        <label><button onclick="document.getElementById('file-${uid}').click()">ファイル</button></label>
+        <input type="file" accept="image/*" multiple hidden id="file-${uid}" onchange="sendFiles('${uid}', this)">
+      </div>
+    </div>`;
+  phones.appendChild(el);
+  el.querySelector("input[type=text]").addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) sendText(uid); });
+}
+
+function form(obj) { const f = new FormData(); for (const [k, v] of Object.entries(obj)) if (v !== undefined && v !== "") f.append(k, v); return f; }
+async function api(path, body) { await fetch(path, {method: "POST", body}); poll(); }
+function sendText(uid) {
+  const i = document.getElementById("in-" + uid);
+  if (!i.value.trim()) return;
+  api("/demo/text", form({user: uid, text: i.value})); i.value = "";
+}
+function sendImage(uid) { api("/demo/image", form({user: uid, sample: document.getElementById("sample-" + uid).value})); }
+async function sendFiles(uid, input) {
+  for (const f of input.files) await api("/demo/image", form({user: uid, sample: document.getElementById("sample-" + uid).value, file: f}));
+  input.value = "";
+}
+
+function render(m) {
+  const chat = document.getElementById("chat-" + m.user);
+  const wrap = document.createElement("div");
+  wrap.className = "msg" + (m.mine ? " mine" : "");
+  const b = document.createElement("div"); b.className = "bubble"; b.textContent = m.text; wrap.appendChild(b);
+  if (m.buttons) {
+    const qr = document.createElement("div"); qr.className = "qr";
+    for (const btn of m.buttons) {
+      const x = document.createElement("button"); x.textContent = btn.label;
+      x.onclick = () => api("/demo/postback", form({user: m.user, data: btn.data, label: btn.label}));
+      qr.appendChild(x);
+    }
+    wrap.appendChild(qr);
+  }
+  const t = document.createElement("span"); t.className = "time"; t.textContent = m.at; wrap.appendChild(t);
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function poll() {
+  try {
+    const s = await (await fetch("/demo/state?after=" + last)).json();
+    for (const m of s.messages) { render(m); last = Math.max(last, m.id); }
+    document.getElementById("meta").textContent =
+      `AI: ${s.analyzer === "remote" ? (s.worker ? "Nosana（中継 接続中）" : "Nosana（中継 未接続→90秒でモック）") : (({fake: "モック", nosana: "Nosana", claude: "Claude"})[s.analyzer] || s.analyzer)} ／ 読み取り待ち ${s.pending}通（${s.window}秒で自動読み取り）`;
+    const h = document.getElementById("hist");
+    if (s.history) { h.href = s.history; h.style.display = ""; }
+  } catch (e) { /* server restarting */ }
+}
+poll(); setInterval(poll, 1500);
+</script>
+</body>
+</html>
