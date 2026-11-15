@@ -48,7 +48,7 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True, "line_mode": config.LINE_MODE, "analyzer": config.ANALYZER, "demo": config.DEMO_MODE,
-            "worker_online": worker_online() if "remote" in (config.ANALYZER,) or config.LINE_MODE == "relay" else None}
+            "worker_online": worker_online() if config.ANALYZER == "remote" or config.LINE_MODE == "relay" else None}
 
 
 # ---------- LINE webhook ----------
@@ -143,7 +143,8 @@ def history(token: str):
         e = lambda v: html.escape(str(v)) if v not in (None, "") else "-"
         cards.append(f"""
         <article class="card imp-{e(m['importance'])}">
-          <header><span class="badge">{e(m['importance'])}</span><span class="st">{e(m['status'])}</span></header>
+          <header><span class="badge">{e(m['importance'])}{' ・ ⚠️ 詐欺の疑い' if m['scam_risk'] else ''}</span><span class="st">{e(m['status'])}</span></header>
+          {f'<p class="scam">注意: {e(m["scam_reason"])}</p>' if m['scam_risk'] else ''}
           <h2>{e(m['sender'])} <small>{e(m['kind'])}</small></h2>
           <p>{e(m['summary'])}</p>
           <dl><dt>金額</dt><dd>{messages.yen(m['amount'])}</dd><dt>期限</dt><dd>{e(m['due_date'])}</dd><dt>やること</dt><dd>{e(m['action'])}</dd></dl>
@@ -213,7 +214,7 @@ def demo_text(user: str = Form(...), text: str = Form(...)):
     return {"ok": True}
 
 
-SAMPLE_IMAGES = {"img:tax": ("tax.jpg", 1), "img:dm": ("dm.jpg", 3), "img:clinic": ("clinic.jpg", 4)}  # (file, fake hint)
+SAMPLE_IMAGES = {"img:tax": ("tax.jpg", 1), "img:dm": ("dm.jpg", 3), "img:clinic": ("clinic.jpg", 4), "img:scam": ("scam.jpg", 6)}  # (file, fake hint)
 
 
 @app.post("/demo/image")
@@ -267,8 +268,17 @@ def demo_setup():
 @app.post("/demo/reset")
 def demo_reset():
     _demo_guard()
-    for t in ("notification_log", "mail_image", "mail_item", "member", "family", "job_run", "line_outbox", "line_fetch"):
-        db.ex(f"DELETE FROM {t}")
-    for p in (config.DATA_DIR / "images").glob("*"):
-        p.unlink(missing_ok=True)
-    return {"ok": True}
+    """Clear the simulator's data only. Families registered through real LINE are kept."""
+    users = list(DEMO_USERS)
+    marks = ",".join("?" * len(users))
+    fams = [r["family_id"] for r in db.q(f"SELECT DISTINCT family_id FROM member WHERE line_user_id IN ({marks})", users)]
+    for fid in fams:
+        for img in db.q("SELECT mi.id, mi.path FROM mail_image mi JOIN mail_item i ON i.id=mi.mail_id WHERE i.family_id=?", (fid,)):
+            Path(img["path"]).unlink(missing_ok=True)
+            db.ex("DELETE FROM mail_image WHERE id=?", (img["id"],))
+        db.ex("DELETE FROM mail_item WHERE family_id=?", (fid,))
+        db.ex("DELETE FROM member WHERE family_id=?", (fid,))
+        db.ex("DELETE FROM family WHERE id=?", (fid,))
+    db.ex(f"DELETE FROM notification_log WHERE to_user IN ({marks})", users)
+    db.ex(f"DELETE FROM notification_log WHERE to_user IN ({marks})", [f"from:{u}" for u in users])
+    return {"ok": True, "families": len(fams)}

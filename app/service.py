@@ -57,7 +57,7 @@ def list_items(user_id: str) -> str:
         "SELECT * FROM mail_item WHERE family_id=? AND state='analyzed' AND status IN ('未対応','あとで') ORDER BY due_date IS NULL, due_date, id DESC LIMIT 10",
         (m["family_id"],),
     )
-    body = "\n".join(f"{messages.ICON.get(r['importance'], '')} {r['sender']}（{r['kind']}）{('期限 ' + r['due_date']) if r['due_date'] else ''}［{r['status']}］" for r in rows) or "未対応の郵便はありません。"
+    body = "\n".join(f"{'⚠️' if r['scam_risk'] else messages.ICON.get(r['importance'], '')} {r['sender']}（{r['kind']}）{('期限 ' + r['due_date']) if r['due_date'] else ''}［{r['status']}］" for r in rows) or "未対応の郵便はありません。"
     return f"{m['parent_name']}さん宛ての未対応の郵便\n{body}\n\n履歴: {messages.history_url(m['history_token'])}"
 
 
@@ -132,9 +132,9 @@ def finalize(mail_id: int, r: dict):
         return False
     r = analyzer.correct(r)
     db.ex(
-        "UPDATE mail_item SET state='analyzed', sender=?, kind=?, summary=?, amount=?, due_date=?, action=?, importance=?, raw_json=?, notified_at=? WHERE id=?",
+        "UPDATE mail_item SET state='analyzed', sender=?, kind=?, summary=?, amount=?, due_date=?, action=?, importance=?, scam_risk=?, scam_reason=?, raw_json=?, notified_at=? WHERE id=?",
         (r["sender"], r["kind"], r["summary"], r["amount"], r["due_date"], r["action"], r["importance"],
-         json.dumps(r, ensure_ascii=False), db.now_iso(), mail_id),
+         int(r["scam_risk"]), r["scam_reason"], json.dumps(r, ensure_ascii=False), db.now_iso(), mail_id),
     )
     notify_item(mail_id)
     return True

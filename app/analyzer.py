@@ -13,7 +13,8 @@ from . import config, db
 log = logging.getLogger(__name__)
 
 IMPORTANCE = ("要対応", "確認", "捨ててよい")
-FIELDS = ("sender", "kind", "summary", "amount", "due_date", "action", "importance", "confidence")
+FIELDS = ("sender", "kind", "summary", "amount", "due_date", "action", "importance", "confidence", "scam_risk", "scam_reason")
+SCAM_ACTION = "支払いも電話もせず、家族で確認する（迷ったら消費者ホットライン188）"
 
 SCHEMA = {
     "type": "object",
@@ -26,6 +27,8 @@ SCHEMA = {
         "action": {"type": "string", "description": "家族がやること。なければ「なし」"},
         "importance": {"type": "string", "enum": list(IMPORTANCE)},
         "confidence": {"type": "number", "description": "読み取りの自信 0〜1"},
+        "scam_risk": {"type": "boolean", "description": "架空請求・詐欺・悪質商法の疑いがあれば true"},
+        "scam_reason": {"type": ["string", "null"], "description": "疑う理由を40字以内で。疑いがなければ null"},
     },
     "required": list(FIELDS),
     "additionalProperties": False,
@@ -35,6 +38,9 @@ SYSTEM = """あなたは高齢の親に届いた郵便物を、離れて暮ら�
 写真(複数枚は同じ1通)から差出人・種類・要約・金額・期限・やること・重要度を読み取ってください。
 重要度: 要対応=支払い・手続き・返送など期限のある行動が必要 / 確認=家族が目を通すべき / 捨ててよい=広告・DMなど。
 迷ったら捨ててよいにせず確認にしてください。読み取れない項目は推測せず null にしてください。
+架空請求や詐欺の疑いも見てください。身に覚えのない未納料金、「訴訟」「最終通告」「差し押さえ」で不安をあおる、本日中の電話を迫る、
+プリペイドカードや個人名義の口座で払わせる、実在しない機関名、といった特徴があれば scam_risk を true にして理由を書きます。
+役所・電力・病院などの通常の請求書、納付書、お知らせは false です。
 LINEで読むので、要約は60字以内、やることは40字以内で簡潔に。宛名の人の名前は書かないでください。"""
 
 
@@ -53,6 +59,9 @@ def _fake_samples() -> list[dict]:
              action="結果を確認し、再検査が必要なら予約", importance="確認", confidence=0.85),
         dict(sender="××不動産", kind="チラシ", summary="ご自宅の売却査定キャンペーン", amount=None, due_date=None,
              action="なし", importance="捨ててよい", confidence=0.9),
+        dict(sender="民事訴訟管理センター", kind="ハガキ", summary="未納料金があるとして訴訟を予告し、電話を求める通知", amount=None,
+             due_date=str(t + timedelta(days=2)), action="記載の番号に電話", importance="要対応", confidence=0.9,
+             scam_risk=True, scam_reason="実在しない機関名で、訴訟をちらつかせ電話を急がせている"),
     ]
 
 
@@ -126,23 +135,27 @@ def analyze_nosana(images: list[bytes]) -> dict:
         for b in images
     ]
     content.append({"type": "text", "text": f"今日は {db.now().date()} です。この郵便物を読み取り、指定のJSONだけを返してください。"})
-    r = httpx.post(
-        f"{config.NOSANA_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {config.NOSANA_API_KEY}"},
-        json={
-            "model": config.NOSANA_MODEL,
-            "max_tokens": 4000,
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
-            "response_format": {"type": "json_schema", "json_schema": {"name": "mail", "schema": SCHEMA, "strict": True}},
-            # Qwen "thinking" tripled latency (16s -> 5s) without changing results on our samples.
-            "chat_template_kwargs": {"enable_thinking": config.NOSANA_THINKING},
-        },
-        timeout=120,
-    )
-    r.raise_for_status()
-    text = r.json()["choices"][0]["message"]["content"] or ""
-    start, end = text.find("{"), text.rfind("}")
-    return json.loads(text[start : end + 1])
+    body = {
+        "model": config.NOSANA_MODEL,
+        "max_tokens": 4000,
+        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+        "response_format": {"type": "json_schema", "json_schema": {"name": "mail", "schema": SCHEMA, "strict": True}},
+        # Qwen "thinking" tripled latency (16s -> 5s) without changing results on our samples.
+        "chat_template_kwargs": {"enable_thinking": config.NOSANA_THINKING},
+    }
+    last = None
+    for _ in range(2):  # the shared GPU endpoint occasionally fails once; retry before giving up
+        try:
+            r = httpx.post(f"{config.NOSANA_BASE_URL}/chat/completions",
+                           headers={"Authorization": f"Bearer {config.NOSANA_API_KEY}"}, json=body, timeout=60)
+            r.raise_for_status()
+            text = r.json()["choices"][0]["message"]["content"] or ""
+            start, end = text.find("{"), text.rfind("}")
+            return json.loads(text[start : end + 1])
+        except Exception as e:
+            last = e
+            log.warning("nosana request failed: %s", e)
+    raise last
 
 
 SAFE_KEYWORDS = ("役所", "市", "区", "町", "村", "税", "年金", "保険", "督促", "催告", "裁判", "差押", "請求", "納付", "更新", "期限")
@@ -151,6 +164,12 @@ SAFE_KEYWORDS = ("役所", "市", "区", "町", "村", "税", "年金", "保険"
 def correct(r: dict) -> dict:
     """Never let something possibly important be silently marked as trash."""
     r = {k: r.get(k) for k in FIELDS}
+    r["scam_risk"] = bool(r["scam_risk"])
+    if r["scam_risk"]:
+        # Tell the family now, and never nag them to "pay before the deadline".
+        r.update(importance="要対応", action=SCAM_ACTION, due_date=None, scam_reason=r["scam_reason"] or "架空請求の特徴があります")
+        return r
+    r["scam_reason"] = None
     if r["importance"] not in IMPORTANCE:
         r["importance"] = "確認"
     text = " ".join(str(r.get(k) or "") for k in ("sender", "kind", "summary", "action"))
@@ -183,4 +202,5 @@ def analyze(images: list[bytes], hint: int | None = None) -> dict:
 
 
 FAILED = dict(sender="不明", kind="不明", summary="自動で読み取れませんでした。写真を確認してください。",
-              amount=None, due_date=None, action="写真を見て判断", importance="確認", confidence=0)
+              amount=None, due_date=None, action="写真を見て判断", importance="確認", confidence=0,
+              scam_risk=False, scam_reason=None)

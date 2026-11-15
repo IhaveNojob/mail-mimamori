@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS mail_item (
   sender TEXT, kind TEXT, summary TEXT, amount INTEGER, due_date TEXT, action TEXT,
   importance TEXT,                 -- 要対応 | 確認 | 捨ててよい
   status TEXT NOT NULL DEFAULT '未対応',  -- 未対応 | 対応済み | あとで | 不要
+  scam_risk INTEGER NOT NULL DEFAULT 0,
+  scam_reason TEXT,
   raw_json TEXT,
   created_at TEXT NOT NULL,
   last_image_at TEXT NOT NULL,
@@ -92,6 +94,12 @@ def conn() -> sqlite3.Connection:
             _conn = sqlite3.connect(config.DATA_DIR / "app.db", check_same_thread=False)
             _conn.row_factory = sqlite3.Row
             _conn.executescript(SCHEMA)
+            # migrate databases created before the scam columns existed
+            cols = {r["name"] for r in _conn.execute("PRAGMA table_info(mail_item)")}
+            if "scam_risk" not in cols:
+                _conn.execute("ALTER TABLE mail_item ADD COLUMN scam_risk INTEGER NOT NULL DEFAULT 0")
+                _conn.execute("ALTER TABLE mail_item ADD COLUMN scam_reason TEXT")
+                _conn.commit()
         return _conn
 
 

@@ -9,8 +9,12 @@ def yen(n) -> str:
 
 
 def mail_card(m, parent_name: str) -> str:
+    if m["scam_risk"]:
+        head = [f"⚠️【詐欺の疑い】{parent_name}さん宛ての郵便", f"注意: {m['scam_reason']}"]
+    else:
+        head = [f"{ICON.get(m['importance'], '')}【{m['importance']}】{parent_name}さん宛ての郵便"]
     lines = [
-        f"{ICON.get(m['importance'], '')}【{m['importance']}】{parent_name}さん宛ての郵便",
+        *head,
         f"差出人: {m['sender'] or '不明'}",
         f"種類: {m['kind'] or '-'}",
         f"内容: {m['summary'] or '-'}",

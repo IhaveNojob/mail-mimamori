@@ -51,14 +51,14 @@
     <button onclick="api('/demo/run/trash')">19時のまとめ通知</button>
     <button onclick="api('/demo/run/remind')">9時の期限通知</button>
     <a id="hist" target="_blank" style="display:none;align-self:center;font-size:13px">履歴ページ ↗</a>
-    <button class="danger" onclick="if(confirm('データを全部消しますか？')) api('/demo/reset').then(()=>location.reload())">リセット</button>
+    <button class="danger" onclick="if(confirm('デモ画面のデータを消しますか？（本物の LINE の登録は残ります）')) api('/demo/reset').then(()=>location.reload())">リセット</button>
   </div>
 </header>
 <main class="phones" id="phones"></main>
 
 <script>
 const USERS = {U_child: "子ども（登録者）", U_helper: "撮影する人（現地）", U_sibling: "兄弟（家族）"};
-const IMAGES = {"img:tax": "市県民税の納付書", "img:dm": "通販のDM", "img:clinic": "健診結果のお知らせ"};
+const IMAGES = {"img:tax": "市県民税の納付書", "img:dm": "通販のDM", "img:clinic": "健診結果のお知らせ", "img:scam": "架空請求のハガキ"};
 let last = 0;
 
 const phones = document.getElementById("phones");

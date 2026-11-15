@@ -4,72 +4,96 @@
 
 > Daytona HackSprint Tokyo（2026-11-15）で作りました。アプリは **Daytona サンドボックス**で動き、郵便物の写真は **Nosana** 上のモデルが読み取ります。
 
-**In English:** A helper photographs an elderly parent's mail and sends it on LINE. A vision model running on **Nosana** reads each letter (sender, amount, due date, what to do), and family members living far away get a LINE notification labeled *action needed / check / safe to discard*, with one-tap status buttons shared across the family. The whole app runs in a **Daytona sandbox**. It works end to end today: a live LINE official account, real model inference, 8 passing tests.
+**In English:** A helper photographs an elderly parent's mail and sends it on LINE. A vision model running on **Nosana** reads each letter (sender, amount, due date, what to do) and flags suspected scams. Family members living far away get a LINE notification labeled *action needed / check / safe to discard*, with one-tap status buttons shared across the family. The whole app runs in a **Daytona sandbox**. It works end to end today: a live LINE official account, real model inference on Nosana, 10 passing tests.
 
 ## 審査基準ごとの要点
 
+| 審査基準 | 一言で | 確かめられる場所 |
+|---|---|---|
+| Innovation | 読めない郵便を、家族で分担できる用件に変える。詐欺の疑いも警告する | [app/analyzer.py](app/analyzer.py) の `correct`、[app/service.py](app/service.py) |
+| Completeness | 登録から通知・共有・再通知・履歴まで通しで動く。テスト10件 | [tests/test_poc.py](tests/test_poc.py)、`/demo` |
+| Real-Life Problem Solving | 離れて暮らす親の郵便を、期限が切れる前に家族が把握できる | 下の「課題解決」、[design.md](design.md) |
+| Sponsored Product Usage | アプリ全体が Daytona で動き、すべての写真を Nosana が読む | [deploy/daytona_deploy.py](deploy/daytona_deploy.py)、[deploy/nosana_worker.py](deploy/nosana_worker.py) |
+
 ### Innovation（革新性）
 
-- **「読めない郵便」を、家族で分担できる用件に変えます。** 写真を保存するだけの見守りとは違い、AI が1通ごとに差出人・金額・期限・やることを取り出し、要対応／確認／捨ててよいに仕分けます。
+- **「読めない郵便」を、家族で分担できる用件に変えます。** 写真を共有するだけの見守りとは違い、AI が1通ごとに差出人・金額・期限・やることを取り出し、要対応／確認／捨ててよいに仕分けます。家族は写真を読み解く必要がありません。
+- **架空請求や詐欺の疑いを、親が動く前に家族へ警告します。** 「訴訟」「最終通告」で不安をあおる、本日中の電話を迫る、プリペイドカードで払わせる、といった特徴を AI が見つけると、理由を添えて「⚠️ 詐欺の疑い」として通知します。やることは「支払いも電話もせず、家族で確認する」に置き換え、期限の再通知（支払いを促す通知）は送りません。
 - **新しいアプリを入れません。** 撮る人も受け取る人も、普段使っている LINE だけで完結します。高齢の親やヘルパーに操作を覚えてもらう必要がありません。
-- **AI を信用しすぎない設計です。** 役所・税・年金・保険などの言葉、金額、期限がある郵便は、AI が「捨ててよい」と答えても「確認」に引き上げます。読み取りに失敗したら、写真を家族に見てもらいます。「捨ててよい」も黙って消さず、毎日19時にまとめて知らせます。
+- **AI を信用しすぎない設計です。** 役所・税・年金・保険などの言葉、金額、期限がある郵便は、AI が「捨ててよい」と答えても「確認」に引き上げます。読み取りに失敗したら、推測せず写真を家族に見てもらいます。「捨ててよい」も黙って消さず、毎日19時にまとめて知らせます。
 - **サンドボックスの通信制限を、設計で越えました。** Daytona のティア1・2では、サンドボックスから Nosana にも LINE にも接続できません。外から中へは接続できることを使い、外の中継プログラムが仕事を取りに行く方式（pull 型）にしました。アプリ本体は隔離された環境に置いたまま、外部の AI とメッセージ基盤を使えます。LINE のアクセストークンをサンドボックスに置かずに済む利点もあります。
 
 ### Completeness（完成度）
 
-最低限どころか、実際の利用の流れが最初から最後まで動きます。
+最低限の試作ではなく、実際の利用の流れが最初から最後まで動きます。
 
 | 機能 | 状態 |
 |---|---|
 | 招待コードで家族と撮影者を登録 | 実際の LINE 公式アカウントで確認済み |
 | 続けて送った写真を1通にまとめる（45秒） | 動作・テスト済み |
-| Nosana のモデルで写真を読み取り、仕分ける | 公開URLで確認済み（通知まで8〜10秒） |
+| Nosana のモデルで写真を読み取り、仕分ける | 公開URLで確認済み（通知まで8〜15秒） |
+| 詐欺・架空請求の疑いを警告する | 公開URLで確認済み・テスト済み |
 | 家族全員に通知、「対応済み／あとで／不要」を共有 | 動作・テスト済み |
 | 「捨ててよい」の19時まとめ通知 | 動作・テスト済み |
 | 期限の7日前・前日の再通知 | 動作・テスト済み |
 | 写真付きの履歴ページ | 動作済み |
 | ブラウザで3人分の LINE を再現するデモ画面 | 動作済み |
+| LINE への送信と写真の取得を中継する | 送信は実際の LINE で確認済み。写真の取得はテスト済み |
 | 中継が止まったときの自動切り替え（90秒でモック） | テスト済み |
 
-- 自動テストは8件あり、すべて通ります（`pytest -q tests`）。
-- 配置はコマンド1つです（`python deploy/daytona_deploy.py`）。もう一度実行すれば、データを残したまま更新できます。
+- 自動テストは10件あり、すべて通ります（`pytest -q tests`）。偽の LINE と偽の AI を使うので、キーなしで実行できます。
+- 配置はコマンド1つです（`python deploy/daytona_deploy.py`）。もう一度実行すれば、データを残したまま更新できます。データベースの項目追加も自動で移行します。
 - キーが無い環境でもモックで動くので、誰でも手元で試せます。
-- まだやっていないことは、この README の最後に正直に書いています。
+- デモ画面のリセットは、デモ用のデータだけを消します。実際の LINE で登録した家族は残ります。
+- まだやっていないことは、この README の最後に書いています。
 
 ### Real-Life Problem Solving（課題解決）
 
 - **誰の困りごとか。** 親と離れて暮らす子ども世代です。実家には税金の納付書、保険の更新、病院からの知らせが届きますが、親は中身を判断しにくく、子どもは封筒の存在すら知りません。気づいたときには期限が過ぎています。
-- **なぜ今の方法では足りないか。** 電話で「何か届いてない？」と聞いても、親は説明できません。帰省して郵便の山を開けるのでは遅すぎます。写真を家族のグループに送ってもらう方法は、読む人が決まらず、誰が対応したかも残りません。
+- **なぜ今の方法では足りないか。**
+  - 電話で「何か届いてない？」と聞いても、親は説明できません。
+  - 帰省して郵便の山を開けるのでは遅すぎます。
+  - 写真を家族のグループに送ってもらう方法は、読む人が決まらず、誰が対応したかも残りません。
 - **このアプリが変えること。**
   - 撮る人は写真を送るだけです（判断はしません）。
   - 家族には、やることと期限が書かれた通知が届きます。
   - 誰かが「対応済み」を押せば全員に伝わるので、二重払いや押し付け合いが起きません。
   - 期限の7日前と前日に再通知するので、「あとで」と思って忘れることを防げます。
-- **詐欺や架空請求への備えにもなります。** 親が一人で判断する前に、家族の目が入ります。
+  - 架空請求のハガキは、親が電話をかける前に家族へ警告が届きます。
+- **続けられる費用です。** 1通の読み取りは、入力約1,360トークン・出力約140〜200トークンです。Nosana の利用記録では1通あたり約0.0006〜0.0007ドル（0.1円ほど）でした。
+- **すぐ始められます。** 必要なのは LINE の友だち追加と、`登録 母`・`参加 コード` の2つの言葉だけです。
 - 個人情報を扱うので、法律・同意の論点は [design.md](design.md) の6章にまとめ、専門家の確認が必要な点として明記しています。
 
 ### Sponsored Product Usage（スポンサー製品の活用）
 
-2社の製品を、飾りではなく中心の部品として使っています。
+2社の製品を、付け足しではなく中心の部品として使っています。どちらかを外すとアプリは動きません。
 
 **Daytona — アプリ全体の実行環境**
 
-- サーバー（FastAPI）・データベース（SQLite）・写真の保存・定期処理（まとめ通知、期限の再通知）のすべてが、Daytona サンドボックス1台の中で動きます。
-- 配置は Daytona の Python SDK で自動化しています（[deploy/daytona_deploy.py](deploy/daytona_deploy.py)）。
-  - `daytona.create()`：ラベル付き・公開プレビュー・自動停止なしでサンドボックスを作る
-  - `sandbox.fs.upload_file()`：コードと設定を送る
-  - `sandbox.process`：依存パッケージを入れ、セッションでサーバーを常駐させ、ログを取る
-  - `sandbox.get_preview_link()`：公開URLを取得し、LINE の Webhook とデモ画面に使う
-  - ラベルで既存のサンドボックスを探して使い回すので、再配置してもデータが残る
-- 配置スクリプトは、サンドボックスから届く先（Nosana、LINE）を実際に調べ、届かなければ中継方式に自動で切り替えます。Daytona の通信制限を前提に組み立てた構成です。
+サーバー（FastAPI）・データベース（SQLite）・写真の保存・定期処理（まとめ通知、期限の再通知）のすべてが、Daytona サンドボックス1台の中で動きます。配置は Daytona の Python SDK で自動化しています。
+
+| 使っている Daytona の機能 | 用途 | 場所 |
+|---|---|---|
+| `daytona.create()`（ラベル・公開・自動停止なし） | アプリ用のサンドボックスを作る | [deploy/daytona_deploy.py](deploy/daytona_deploy.py) の `main` |
+| `daytona.list()` とラベル | 既存のサンドボックスを探して使い回す（再配置してもデータが残る） | 同 `find` |
+| `sandbox.fs.upload_file()` | コードと設定を送る | 同 `upload` |
+| `sandbox.process.exec()` | 依存パッケージを入れる。届く通信先を調べる | 同 `upload`、`main` |
+| `sandbox.process` のセッション | サーバーを常駐させ、ログを取る | 同 `start`、`logs` |
+| `sandbox.get_preview_link()` | 公開URLを取得し、LINE の Webhook とデモ画面に使う | 同 `main` |
+
+配置スクリプトは、サンドボックスから Nosana と LINE に届くかを実際に調べ、届かなければ中継方式に自動で切り替えます。Daytona の通信制限（ティア1・2の許可リスト）を調べたうえで組み立てた構成です。
 
 **Nosana — 郵便物を読む AI**
 
-- 郵便物の写真は、すべて Nosana の推論 API（`inference.nosana.com`、モデル `qwen/qwen3.8-27b`）が読み取ります（[app/analyzer.py](app/analyzer.py) の `analyze_nosana`）。
-- JSON スキーマを指定した構造化出力で、差出人・種類・要約・金額・期限・やること・重要度・自信の度合いを受け取ります。
-- 日本語の納付書・DM・健診結果のサンプルで、金額・期限・仕分けが正しいことを確認しました。
-- 速度も調整しました。モデルの思考機能を止めることで、1通あたり約16秒かかっていた読み取りを約5秒にしています（結果は同じ）。複数の郵便は並行して読みます。
-- 中継プログラム（[deploy/nosana_worker.py](deploy/nosana_worker.py)）が、Daytona の中のアプリと Nosana をつなぎます。
+| 使っている Nosana の機能 | 用途 | 場所 |
+|---|---|---|
+| 推論 API（OpenAI 互換、`qwen/qwen3.8-27b`） | すべての郵便物の写真を読み取る | [app/analyzer.py](app/analyzer.py) の `analyze_nosana` |
+| 画像入力（複数枚） | 表と裏など、まとめた写真を1回で読む | 同上 |
+| 構造化出力（JSON スキーマ指定） | 差出人・金額・期限・やること・重要度・詐欺の疑いを決まった形で受け取る | 同 `SCHEMA` |
+| 思考機能の切り替え | 読み取りを約16秒から約5秒に短縮（結果は同じ） | 同 `analyze_nosana`、`NOSANA_THINKING` |
+| 並行リクエスト | 複数の郵便を同時に読む | [deploy/nosana_worker.py](deploy/nosana_worker.py) |
+
+日本語の納付書・DM・健診結果・架空請求ハガキのサンプル（[app/static/samples/](app/static/samples/)）で、金額・期限・仕分け・詐欺の判定が正しいことを確認しました。
 
 ```text
 [LINE / ブラウザ] ──▶ [Daytona サンドボックス: アプリ本体・DB・写真・定期処理]
@@ -82,6 +106,7 @@
 
 - 写真の受け取り（続けて送った写真は1通にまとめる。既定は45秒以内）
 - AI による読み取り（差出人・種類・要約・金額・期限・やること・重要度）＋安全側の補正
+- 架空請求・詐欺の疑いがある郵便を、理由付きで警告
 - 家族への通知と「対応済み／あとで／不要」ボタン
 - 「捨ててよい」は毎日19時にまとめて通知（黙って消さない）
 - 期限の7日前と前日に再通知（毎朝9時）
@@ -120,6 +145,7 @@ copy .env.example .env          # DAYTONA_API_KEY を書き込む（LINE / AI �
 3. 45秒待つか「今すぐ読み取る」を押す → 子どもと兄弟に【要対応】の通知とボタンが届く
 4. 兄弟が「対応済み」を押す → 子どもにも共有される
 5. 「通販のDM」を送って「19時のまとめ通知」→ 捨ててよいものはまとめて届く
+   - 「架空請求のハガキ」を送ると、「⚠️ 詐欺の疑い」の警告が理由付きで届く
 6. 「9時の期限通知」→ 期限が7日以内のものを再通知
 7. 「履歴ページ ↗」で写真付きの一覧を見る
 

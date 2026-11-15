@@ -173,3 +173,38 @@ def test_line_relay(app_env, monkeypatch):
     # demo users never reach LINE
     line.push("U_child", "x")
     assert db.q("SELECT * FROM line_outbox WHERE to_user='U_child'") == []
+
+
+def test_scam_warning(app_env):
+    service, db, _ = app_env
+    from app.analyzer import SCAM_ACTION, correct
+    setup_family(service, db)
+    service.handle_image("helper", b"scam", hint=6)
+    service.process_due_batches(force=True)
+    m = db.one("SELECT * FROM mail_item")
+    assert m["scam_risk"] == 1 and m["importance"] == "要対応" and m["due_date"] is None
+    card = inbox(db, "child")[-1]
+    assert "詐欺の疑い" in card and SCAM_ACTION in card
+    assert service.send_reminders() == 0  # never "pay before the deadline" for a scam
+    # a normal bill is not flagged, and the flag survives a missing reason
+    ok = correct(dict(sender="市役所", kind="納付書", summary="", amount=1000, due_date=None, action="払う", importance="要対応", confidence=0.9))
+    assert ok["scam_risk"] is False and ok["scam_reason"] is None
+    bad = correct(dict(sender="x", kind="x", summary="", amount=None, due_date=None, action="電話", importance="捨ててよい", confidence=0.9, scam_risk=True))
+    assert bad["importance"] == "要対応" and bad["scam_reason"]
+
+
+def test_demo_reset_keeps_real_line_families(app_env):
+    service, db, _ = app_env
+    from fastapi.testclient import TestClient
+
+    from app import main
+    real = "U" + "c" * 32
+    service.handle_text(real, "登録 父")
+    with TestClient(main.app) as c:
+        c.post("/demo/setup")
+        c.post("/demo/image", data={"user": "U_helper", "sample": "img:tax"})
+        assert len(db.q("SELECT * FROM family")) == 2
+        assert c.post("/demo/reset").json()["families"] == 1
+    assert [r["parent_name"] for r in db.q("SELECT * FROM family")] == ["父"]
+    assert db.q("SELECT * FROM mail_item") == [] and service.member_of(real)
+    assert inbox(db, real) and not inbox(db, "U_child")

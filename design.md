@@ -18,16 +18,19 @@
    - 金額・期限がある、役所・税・年金・保険・督促などの言葉がある、自信が低い → 「捨ててよい」にしない
    - 金額があって期限まで14日以内なら「要対応」
    - 読み取りに失敗したら「確認」として写真を見てもらう
+   - 架空請求・詐欺の疑い（訴訟や差し押さえで不安をあおる、本日中の電話を迫る、プリペイドカードで払わせる、実在しない機関名など）があれば「⚠️ 詐欺の疑い」として理由付きで通知する。やることは「支払いも電話もせず、家族で確認する」に置き換え、期限は記録しない（支払いを促す再通知を送らないため）
 4. 「要対応」「確認」はすぐ owner と family に通知し、「対応済み／あとで／不要」ボタンを付ける
 5. 「捨ててよい」は19時にまとめて通知する。黙って消さず、「残す」ボタンを付ける
 6. 毎朝9時に、期限の7日前と前日の郵便を再通知する（未対応・あとでのもの）
 
 ## 4. データ
-SQLite（`data/app.db`）と写真（`data/images/`）。テーブルは family / member / mail_item / mail_image / notification_log / job_run。
+SQLite（`data/app.db`）と写真（`data/images/`）。テーブルは family / member / mail_item / mail_image / notification_log / line_outbox / line_fetch / job_run。
 
 ## 5. 外部サービス
 - LINE Messaging API：Webhook（署名検証）、reply / push、画像取得。キーが無ければ fake（`notification_log` に記録して `/demo` に表示）
-- Claude（`claude-opus-5-5`）：画像を渡し、JSON スキーマ指定の構造化出力で受け取る。キーが無ければ fake
+- Nosana の推論 API（`qwen/qwen3.8-27b`）：画像を渡し、JSON スキーマ指定の構造化出力で受け取る。思考機能は止めて速度を優先する
+- Claude（`claude-opus-5-5`）：Nosana のキーが無いときの代わり。どちらのキーも無ければ fake
+- 中継プログラム：サンドボックスから届かない Nosana と LINE への通信を、外から代行する（pull 型）
 - Daytona：サンドボックス1台にサーバーを置き、プレビューURLで公開する
 
 ## 6. 法律・同意（要確認）
